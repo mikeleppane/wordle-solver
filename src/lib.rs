@@ -97,68 +97,7 @@ pub struct Guess<'a> {
 
 impl Guess<'_> {
     pub fn matches(&self, word: &str) -> bool {
-        assert_eq!(self.word.len(), 5);
-        assert_eq!(word.len(), 5);
-        let mut used = [false; 5];
-
-        for (i, ((g, &m), w)) in self
-            .word
-            .bytes()
-            .zip(&self.mask)
-            .zip(word.bytes())
-            .enumerate()
-        {
-            if m == Correctness::Correct {
-                if g != w {
-                    return false;
-                } else {
-                    used[i] = true;
-                }
-            }
-        }
-        for (i, (w, &m)) in word.bytes().zip(&self.mask).enumerate() {
-            if m == Correctness::Correct {
-                continue;
-            }
-            let mut plausible = true;
-            if self
-                .word
-                .bytes()
-                .zip(&self.mask)
-                .enumerate()
-                .any(|(j, (g, m))| {
-                    if g != w {
-                        return false;
-                    }
-                    if used[j] {
-                        return false;
-                    }
-                    match *m {
-                        Correctness::Correct => {
-                            unreachable!("all correct guesses should have beed taken care of")
-                        }
-                        Correctness::Misplaced if j == i => {
-                            plausible = false;
-                            return false;
-                        }
-                        Correctness::Misplaced => {
-                            used[j] = true;
-                            return true;
-                        }
-                        Correctness::Wrong => {
-                            plausible = false;
-                            return false;
-                        }
-                    }
-                })
-                && plausible
-            {
-            } else if !plausible {
-                return false;
-            } else {
-            }
-        }
-        true
+        Correctness::compute(word, &self.word) == self.mask
     }
 }
 
