@@ -1,3 +1,5 @@
+use itertools::iproduct;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 pub mod algorithms;
@@ -32,7 +34,7 @@ impl Wordle {
             );
             let correctness = Correctness::compute(answer, guess.as_str());
             history.push(Guess {
-                word: guess,
+                word: Cow::Owned(guess),
                 mask: correctness,
             });
         }
@@ -75,11 +77,89 @@ impl Correctness {
         }
         c
     }
+
+    pub fn patterns() -> impl Iterator<Item = [Self; 5]> {
+        iproduct!(
+            [Self::Correct, Self::Misplaced, Self::Wrong],
+            [Self::Correct, Self::Misplaced, Self::Wrong],
+            [Self::Correct, Self::Misplaced, Self::Wrong],
+            [Self::Correct, Self::Misplaced, Self::Wrong],
+            [Self::Correct, Self::Misplaced, Self::Wrong]
+        )
+        .map(|(a, b, c, d, e)| [a, b, c, d, e])
+    }
 }
 
-pub struct Guess {
-    word: String,
+pub struct Guess<'a> {
+    word: Cow<'a, str>,
     mask: [Correctness; 5],
+}
+
+impl Guess<'_> {
+    pub fn matches(&self, word: &str) -> bool {
+        assert_eq!(self.word.len(), 5);
+        assert_eq!(word.len(), 5);
+        let mut used = [false; 5];
+
+        for (i, ((g, &m), w)) in self
+            .word
+            .bytes()
+            .zip(&self.mask)
+            .zip(word.bytes())
+            .enumerate()
+        {
+            if m == Correctness::Correct {
+                if g != w {
+                    return false;
+                } else {
+                    used[i] = true;
+                }
+            }
+        }
+        for (i, (w, &m)) in word.bytes().zip(&self.mask).enumerate() {
+            if m == Correctness::Correct {
+                continue;
+            }
+            let mut plausible = true;
+            if self
+                .word
+                .bytes()
+                .zip(&self.mask)
+                .enumerate()
+                .any(|(j, (g, m))| {
+                    if g != w {
+                        return false;
+                    }
+                    if used[j] {
+                        return false;
+                    }
+                    match *m {
+                        Correctness::Correct => {
+                            unreachable!("all correct guesses should have beed taken care of")
+                        }
+                        Correctness::Misplaced if j == i => {
+                            plausible = false;
+                            return false;
+                        }
+                        Correctness::Misplaced => {
+                            used[j] = true;
+                            return true;
+                        }
+                        Correctness::Wrong => {
+                            plausible = false;
+                            return false;
+                        }
+                    }
+                })
+                && plausible
+            {
+            } else if !plausible {
+                return false;
+            } else {
+            }
+        }
+        true
+    }
 }
 
 pub trait Guesser {
@@ -92,6 +172,7 @@ impl Guesser for fn(history: &[Guess]) -> String {
     }
 }
 
+#[cfg(test)]
 macro_rules! guesser {
     (|$history:ident| $impl:block) => {{
         struct G;
@@ -105,7 +186,49 @@ macro_rules! guesser {
 }
 
 #[cfg(test)]
+macro_rules! mask {
+    (C) => {$crate::Correctness::Correct};
+    (M) => {$crate::Correctness::Misplaced};
+    (W) => {$crate::Correctness::Wrong};
+    ($($c:tt)+) => {[
+        $(mask!($c)),+
+    ]}
+}
+
+#[cfg(test)]
 mod tests {
+    mod guess_matcher {
+        use crate::Guess;
+        use std::borrow::Cow;
+
+        macro_rules! check {
+            ($prev:literal + [$($mask:tt)+] allows $next:literal) => {
+                assert!(Guess {
+                    word: Cow::Borrowed($prev),
+                    mask: mask![$($mask )+]
+                }.matches($next));
+            };
+            ($prev:literal + [$($mask:tt)+] disallows $next:literal) => {
+                assert!(!Guess {
+                    word: Cow::Borrowed($prev),
+                    mask: mask![$($mask )+]
+                }.matches($next));
+            }
+        }
+
+        #[test]
+        fn matches() {
+            check!("abcde" + [C C C C C] allows "abcde");
+            check!("abcdf" + [C C C C C] disallows "abcde");
+            check!("abcde" + [W W W W W] allows "fghij");
+            check!("abcde" + [M M M M M] allows "eabcd");
+            check!("aaabb" + [C M W W W] disallows "accaa");
+            check!("baaaa" + [W C M W W] allows "aaccc");
+            check!("baaaa" + [W C M W W] disallows "caacc");
+            check!("abcde" + [W W W W W] disallows "bcdea");
+        }
+    }
+
     mod game {
         use crate::{Guess, Guesser, Wordle};
 
